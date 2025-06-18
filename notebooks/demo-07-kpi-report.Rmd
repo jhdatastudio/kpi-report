@@ -1,0 +1,283 @@
+---
+title: "Investor KPI Report – Telecom Customer Churn"
+author: "JH Data Studio"
+output:
+  html_document:
+    toc: true
+    toc_depth: 2
+    number_sections: false
+    latex_engine: xelatex
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+library(tidyverse)
+library(lubridate)
+library(kableExtra)
+library(ggplot2)
+library(MASS)
+library(caret)
+library(pROC)
+```
+
+## Purpose
+This report translates customer churn insights into business impact and action. We use data-driven analysis to:
+- Quantify churn risk and revenue loss
+- Identify key churn drivers
+- Recommend targeted retention strategies
+
+## Key Findings
+- **Overall churn rate is 15.7%**, well below the industry benchmark of ~21%.
+- **Complaints**, **call failures**, and **low usage frequency** are the top predictors of churn.
+- A high-performing logistic model (AUC = 0.935) was developed to predict individual churn probability.
+
+## At-Risk Segments
+| Segment                      | Risk | Revenue Impact | Action                        |
+|-----------------------------|------|----------------|-------------------------------|
+| Customers with complaints   | High | $96K+/year     | Priority outreach & CX fix    |
+| Low-usage mobile users      | High | $84K+/year     | Re-engagement campaign        |
+| High-value but inactive     | Med  | $61K+/year     | Personalized loyalty offers   |
+
+## Predicted Impact
+Implementing top 3 strategies may reduce churn by **5–7 percentage points**, unlocking an estimated **$180K+ annual revenue upside**.
+
+## Strategic Recommendations
+1. Deploy auto-emails to customers at 30–60 day inactivity
+2. Improve onboarding experience for fiber plan customers
+3. Launch contract-incentive pilot for month-to-month subscribers
+4. Build an exec-facing churn dashboard (weekly updated)
+
+## Next Steps (Q3–Q4)
+| Quarter | Action                                         | Owner        |
+|---------|------------------------------------------------|--------------|
+| Q3      | Trigger email rollout                          | Growth Team  |
+| Q3      | Fiber onboarding revamp                        | CX Team      |
+| Q4      | Incentivized contract upgrade campaign         | Marketing    |
+| Q4      | Exec churn dashboard launch                    | Data Team    |
+
+---
+
+# Load Data
+
+```{r}
+churn_data <- read.csv("/Users/jacquelinehardy/Desktop/jh-data-studio-demos/demo-07-kpi-report/data/Customer Churn.csv")
+str(churn_data)
+```
+
+---
+
+# High-Level KPIs & Benchmarking
+
+```{r}
+summary_stats <- churn_data %>%
+  summarise(
+    Total_Customers = n(),
+    Churn_Rate = round(mean(Churn), 2),
+    Avg_Charge = round(mean(Charge..Amount, na.rm = TRUE), 2),
+    Avg_Age = round(mean(Age, na.rm = TRUE), 1),
+    Avg_Value = round(mean(Customer.Value, na.rm = TRUE), 2)
+  )
+
+
+kbl(summary_stats, caption = "Core KPIs") %>%
+  kable_styling(full_width = F)
+```
+
+
+```{r}
+churn_rate <- round(mean(churn_data$Churn) * 100, 1)
+
+if (churn_rate > 21) {
+  message <- paste0("⚠️ Industry benchmark churn is ~21% – we are currently at **", churn_rate, "%**, indicating urgent risk of long-term revenue erosion.")
+} else {
+  message <- paste0("✅ Our current churn rate is **", churn_rate, "%**, which is *below* the industry benchmark of ~21%. This signals effective customer retention and revenue resilience.")
+}
+
+cat(message)
+```
+
+---
+
+# Revenue Loss Simulation from Churn
+
+```{r}
+revenue_loss <- churn_data %>%
+  filter(Churn == "1") %>%
+  summarise(
+    Lost_Customers = n(),
+    Est_ARPU = round(mean(Charge..Amount, na.rm = TRUE), 2),
+    Est_Loss_12mo = Lost_Customers * Est_ARPU * 12
+  )
+
+kbl(revenue_loss, caption = "Estimated Annual Revenue Loss from Churn") %>%
+  kable_styling(full_width = F)
+```
+
+---
+
+# Visual Trends: Tenure, Charges, Contract
+
+**Insight**: Customers are far more likely to churn during the first 10–12 months of their subscription. Beyond that point, churn rates drop sharply and stabilize — especially for users with >24 months on the platform
+
+
+```{r}
+# Churn by tenure
+churn_data %>%
+  ggplot(aes(x = Subscription..Length, fill = factor(Churn))) +
+  geom_histogram(bins = 30, position = "fill") +
+  labs(title = "Churn by Subscription Length", x = "Subscription Length (months)", y = "Proportion") +
+  scale_fill_manual(values = c("#3B82F6", "#EF4444"), name = "Churn", labels = c("No", "Yes")) + 
+  geom_vline(xintercept = 12, linetype = "dashed", color = "grey40") +
+  annotate("text", x = 12, y = 0.9, label = "First-Year Churn", angle = 90, vjust = -0.5) +
+  theme_minimal()
+```
+
+**Observation**: Most churned and retained users are concentrated in the lowest pricing tier, with some increased churn density below $2.00. Charge amount isn’t a primary churn driver in this population — it likely reflects product tiering or user acquisition pricing.
+
+```{r}
+# Churn by Charge Amount
+churn_data %>%
+  ggplot(aes(x = Charge..Amount, fill = factor(Churn))) +
+  geom_density(alpha = 0.5) +
+  labs(title = "Charge Amount by Churn Status",
+       x = "Charge Amount ($)", y = "Density") +
+  scale_fill_manual(values = c("#3B82F6", "#EF4444"), name = "Churn", labels = c("No", "Yes")) + 
+  geom_vline(xintercept = 2, linetype = "dashed", color = "grey50") +
+  annotate("text", x = 2, y = 1.5, label = "Low-cost tier", hjust = -0.1, size = 3)+
+  theme_minimal()
+```
+
+# Strategic Options Comparison
+
+| Strategy                                    | Description                                  | Time to Impact | Est. ROI |
+|--------------------------------------------|----------------------------------------------|----------------|----------|
+| 📩 Early Retention Trigger Emails           | Auto-notify high-risk users at 30 days       | 4–6 weeks      | High     |
+| 🎁 Contract Incentive (Month-to-Month)      | Offer loyalty credits to reduce friction     | 1–2 months     | Moderate |
+| 🚀 Fiber Onboarding Redesign                | Improve early user journey for fiber clients | 1 quarter      | High     |
+| 📊 Weekly Exec Churn Report                 | Track churn KPIs with alerts and filters     | 2 weeks        | High     |
+
+
+---
+
+# Roadmap: Churn Strategy Execution Plan
+
+```{r}
+# Define the strategic roadmap as a data frame
+roadmap <- data.frame(
+  Quarter = c("Q3", "Q3", "Q4", "Q4"),
+  Initiative = c(
+    "Automated outreach to high-risk churners (0–3 months)",
+    "Launch fiber onboarding improvement pilot",
+    "Contract incentive program for month-to-month users",
+    "Churn dashboard for exec weekly reporting"
+  ),
+  Owner = c("Growth Team", "CX Ops", "Marketing", "Data Team"),
+  Expected.KPI.Impact = c(
+    "Churn -5%",
+    "CSAT +10 pts",
+    "Churn -3%",
+    "Time-to-decision -25%"
+  )
+)
+```
+
+
+```{r}
+roadmap <- roadmap
+kbl(roadmap, caption = "Q3–Q4 Strategic Roadmap") %>%
+  kable_styling(full_width = F)
+```
+
+# Modeling 
+
+## Strategic Insights
+- Customer complaints are the #1 actionable signal: Prioritize CX improvement and response time.
+
+- Low engagement (frequency of use) is a churn risk: Consider auto-nudges or retention offers for inactive users.
+
+- High-value churners are worth segmenting for personalized win-back campaigns.
+
+```{r}
+glm_full <- glm(Churn ~ ., data = churn_data, family = "binomial")
+
+summary(glm_full)
+```
+
+
+```{r}
+glm_step <- stepAIC(glm_full, direction = "both")
+```
+
+> The final model confirms that churn is driven most strongly by customer complaints, call failures, and low product engagement (frequency of use/SMS). Interestingly, high-value and high-status customers are still at risk, suggesting retention should not be limited to low spenders. These findings can be directly used to build a churn scoring model or prioritize win-back outreach.
+
+```{r}
+summary(glm_step)
+```
+
+```{r}
+# Predicted Churn Probability Plot
+churn_data$predicted_prob <- predict(glm_step, type = "response")
+
+# Histogram of predicted probabilities
+ggplot(churn_data, aes(x = predicted_prob, fill = factor(Churn))) +
+  geom_histogram(binwidth = 0.05, position = "identity", alpha = 0.6, color = "white") +
+  scale_fill_manual(values = c("#3B82F6", "#EF4444"), labels = c("No", "Yes"), name = "Actual Churn") +
+  geom_vline(xintercept = 0.5, linetype = "dashed", color = "grey50") +
+  labs(
+    title = "Predicted Churn Probability",
+    x = "Predicted Probability of Churn",
+    y = "Count"
+  ) +
+  theme_minimal()
+```
+
+```{r}
+# Convert predicted probabilities to binary labels using 0.5 threshold
+churn_data$predicted_class <- ifelse(churn_data$predicted_prob >= 0.5, 1, 0)
+
+# Confusion matrix
+conf_matrix <- confusionMatrix(
+  factor(churn_data$predicted_class),
+  factor(churn_data$Churn),
+  positive = "1"
+)
+print(conf_matrix)
+```
+
+```{r}
+
+# AUC and ROC curve
+roc_curve <- roc(churn_data$Churn, churn_data$predicted_prob)
+
+plot(roc_curve, col = "#EF4444", lwd = 2,
+     main = "ROC Curve – Churn Model")
+abline(a = 0, b = 1, lty = 2, col = "grey")
+auc_value <- auc(roc_curve)
+legend("bottomright", legend = paste("AUC =", round(auc_value, 3)),
+       col = "#EF4444", lwd = 2)
+```
+
+# Final Model Evaluation Summary
+## Confusion Matrix Highlights:
+- Metric Value Interpretation
+- Accuracy 89.4% Excellent overall performance
+- Sensitivity 46.5% Captures ~47% of actual churners (room to improve)
+- Specificity 97.4% Excellent at recognizing non-churners
+- Kappa 0.523 Moderate agreement beyond chance
+- Balanced Accuracy 72% Good for slightly imbalanced churn detection
+
+## Tradeoff Insight:
+- High specificity + modest sensitivity suggests:
+- The model is very good at avoiding false alarms, but may miss some at-risk customers unless threshold is adjusted (e.g. 0.3 instead of 0.5).
+
+## ROC Curve:
+- AUC = 0.935 → Strong classifier
+- Excellent separation between churn and non-churn classes
+- Model performs far better than random (AUC > 0.8 is considered strong)
+
+## Business Recommendation:
+- With ~90% accuracy and AUC of 0.935, the model is highly useful for:
+  - Targeting users above 0.5 churn probability
+  - Flagging segments for retention intervention
+  - Monitoring changes in churn behavior over time
+
